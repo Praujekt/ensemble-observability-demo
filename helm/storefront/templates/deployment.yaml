@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ensemble-storefront
+  labels:
+    app: ensemble-storefront
+    component: storefront
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: ensemble-storefront
+  template:
+    metadata:
+      labels:
+        app: ensemble-storefront
+        component: storefront
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: storefront
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: 5000
+        env:
+        - name: INVENTORY_URL
+          value: {{ .Values.env.INVENTORY_URL | quote }}
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: CHAOS_CHECKOUT_DELAY
+          value: {{ .Values.chaos.checkoutDelay | quote }}
+        - name: CHAOS_ERROR_RATE
+          value: {{ .Values.chaos.errorRate | quote }}
+        - name: CHAOS_USER_MULTIPLIER
+          value: {{ .Values.chaos.userMultiplier | quote }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: {{ .Values.resources.requests.cpu }}
+            memory: {{ .Values.resources.requests.memory }}
+          limits:
+            cpu: {{ .Values.resources.limits.cpu }}
+            memory: {{ .Values.resources.limits.memory }}

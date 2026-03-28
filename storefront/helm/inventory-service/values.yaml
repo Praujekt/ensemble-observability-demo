@@ -1,0 +1,29 @@
+replicaCount: 2
+
+image:
+  repository: localhost/ensemble-inventory
+  tag: latest
+  pullPolicy: Never
+
+service:
+  type: ClusterIP
+  port: 5001
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# Chaos controls
+chaos:
+  dbSaturation: "0"     # 0.0 to 1.0 — fraction of DB pool consumed
+  slowQueries: "0"      # seconds of extra DB query delay
+  errorRate: "0"        # 0.0 to 1.0 probability of error per request
+
+annotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "5001"
+  prometheus.io/path: "/metrics"

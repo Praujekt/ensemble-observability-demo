@@ -1,0 +1,34 @@
+replicaCount: 2
+
+image:
+  repository: localhost/ensemble-storefront
+  tag: latest
+  pullPolicy: Never
+
+service:
+  type: NodePort
+  port: 5000
+  nodePort: 30100
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi
+
+env:
+  INVENTORY_URL: "http://ensemble-inventory:5001"
+  PYTHONUNBUFFERED: "1"
+
+# Chaos controls — set these to simulate Black Friday
+chaos:
+  checkoutDelay: "0"       # seconds of extra delay on checkout
+  errorRate: "0"           # 0.0 to 1.0 probability of error
+  userMultiplier: "1"      # multiplier for active user gauge
+
+annotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "5000"
+  prometheus.io/path: "/metrics"
