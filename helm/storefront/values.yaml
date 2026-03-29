@@ -22,13 +22,23 @@ env:
   INVENTORY_URL: "http://ensemble-inventory:5001"
   PYTHONUNBUFFERED: "1"
 
-# Chaos controls — set these to simulate Black Friday
+# Azure Logic App URLs — set after creating Logic Apps in Azure
+# Leave empty to run in simulated mode (still generates realistic metrics)
+azure:
+  fraudCheckUrl: ""
+  loyaltyPointsUrl: ""
+  orderNotifyUrl: ""
+
+# Chaos controls
 chaos:
-  checkoutDelay: "0"       # seconds of extra delay on checkout
-  errorRate: "0"           # 0.0 to 1.0 probability of error
-  userMultiplier: "1"      # multiplier for active user gauge
+  checkoutDelay: "0"
+  errorRate: "0"
+  userMultiplier: "1"
+  logicAppErrorRate: "0"
+  logicAppSlowRate: "0"
 
 annotations:
   prometheus.io/scrape: "true"
   prometheus.io/port: "5000"
   prometheus.io/path: "/metrics"
+  
