@@ -37,15 +37,6 @@ output "order_notification_url" {
   sensitive   = true
 }
 
-output "app_insights_instrumentation_key" {
-  value     = azurerm_application_insights.ensemble.instrumentation_key
-  sensitive = true
-}
-
 output "resource_group_name" {
   value = azurerm_resource_group.ensemble.name
-}
-
-output "function_app_name" {
-  value = azurerm_linux_function_app.ensemble.name
 }
