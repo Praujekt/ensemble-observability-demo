@@ -1,62 +1,50 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ensemble-storefront
+  name: ensemble-inventory
   labels:
-    app: ensemble-storefront
-    component: storefront
+    app: ensemble-inventory
+    component: inventory
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app: ensemble-storefront
+      app: ensemble-inventory
   template:
     metadata:
       labels:
-        app: ensemble-storefront
-        component: storefront
+        app: ensemble-inventory
+        component: inventory
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "5000"
+        prometheus.io/port: "5001"
         prometheus.io/path: "/metrics"
     spec:
       containers:
-      - name: storefront
+      - name: inventory
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         ports:
-        - containerPort: 5000
+        - containerPort: 5001
         env:
-        - name: INVENTORY_URL
-          value: {{ .Values.env.INVENTORY_URL | quote }}
         - name: PYTHONUNBUFFERED
           value: "1"
-        - name: AZURE_FRAUD_CHECK_URL
-          value: {{ .Values.azure.fraudCheckUrl | quote }}
-        - name: AZURE_LOYALTY_POINTS_URL
-          value: {{ .Values.azure.loyaltyPointsUrl | quote }}
-        - name: AZURE_ORDER_NOTIFY_URL
-          value: {{ .Values.azure.orderNotifyUrl | quote }}
-        - name: CHAOS_CHECKOUT_DELAY
-          value: {{ .Values.chaos.checkoutDelay | quote }}
+        - name: CHAOS_DB_SATURATION
+          value: {{ .Values.chaos.dbSaturation | quote }}
+        - name: CHAOS_SLOW_QUERIES
+          value: {{ .Values.chaos.slowQueries | quote }}
         - name: CHAOS_ERROR_RATE
           value: {{ .Values.chaos.errorRate | quote }}
-        - name: CHAOS_USER_MULTIPLIER
-          value: {{ .Values.chaos.userMultiplier | quote }}
-        - name: CHAOS_LOGIC_APP_ERROR_RATE
-          value: {{ .Values.chaos.logicAppErrorRate | quote }}
-        - name: CHAOS_LOGIC_APP_SLOW_RATE
-          value: {{ .Values.chaos.logicAppSlowRate | quote }}
         livenessProbe:
           httpGet:
             path: /health
-            port: 5000
+            port: 5001
           initialDelaySeconds: 10
           periodSeconds: 15
         readinessProbe:
           httpGet:
             path: /health
-            port: 5000
+            port: 5001
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:

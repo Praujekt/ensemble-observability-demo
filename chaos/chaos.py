@@ -323,6 +323,7 @@ def signal_handler(sig, frame):
 
 
 def main():
+    global BASE_URL
     parser = argparse.ArgumentParser(
         description="Ensemble Black Friday Chaos Script",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -346,8 +347,6 @@ def main():
         help="Run for N seconds then stop (0 = run until Ctrl+C)"
     )
     args = parser.parse_args()
-
-    global BASE_URL
     BASE_URL = args.url
 
     signal.signal(signal.SIGINT, signal_handler)
