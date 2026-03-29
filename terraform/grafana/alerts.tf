@@ -101,7 +101,7 @@ resource "grafana_rule_group" "ensemble_checkout" {
         refId      = "C"
         expression = "B"
         conditions = [{
-          evaluator = { params = [0.5], type = "gt" }
+          evaluator = { params = [2.5], type = "gt" }
           operator  = { type = "and" }
           query     = { params = ["C"] }
           reducer   = { params = [], type = "last" }
