@@ -66,12 +66,16 @@ data:
           - source_labels: [__meta_kubernetes_pod_label_app]
             regex: ensemble-.*
             action: keep
-          - source_labels: [__meta_kubernetes_pod_uid, __meta_kubernetes_pod_container_name]
-            separator: /
+          - source_labels: [__meta_kubernetes_pod_name]
             target_label: __path__
-            replacement: /var/log/pods/*$1*/$2/*.log
+            replacement: /var/log/pods/default_$1_*/*/*.log
         pipeline_stages:
           - json:
+              expressions:
+                log: log
+                stream: stream
+          - json:
+              source: log
               expressions:
                 level: level
                 message: message
@@ -86,6 +90,8 @@ data:
               service:
               endpoint:
               logic_app:
+          - output:
+              source: log
 
 ---
 apiVersion: apps/v1
