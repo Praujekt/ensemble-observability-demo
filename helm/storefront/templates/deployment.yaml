@@ -31,12 +31,22 @@ spec:
           value: {{ .Values.env.INVENTORY_URL | quote }}
         - name: PYTHONUNBUFFERED
           value: "1"
+        - name: AZURE_FRAUD_CHECK_URL
+          value: {{ .Values.azure.fraudCheckUrl | quote }}
+        - name: AZURE_LOYALTY_POINTS_URL
+          value: {{ .Values.azure.loyaltyPointsUrl | quote }}
+        - name: AZURE_ORDER_NOTIFY_URL
+          value: {{ .Values.azure.orderNotifyUrl | quote }}
         - name: CHAOS_CHECKOUT_DELAY
           value: {{ .Values.chaos.checkoutDelay | quote }}
         - name: CHAOS_ERROR_RATE
           value: {{ .Values.chaos.errorRate | quote }}
         - name: CHAOS_USER_MULTIPLIER
           value: {{ .Values.chaos.userMultiplier | quote }}
+        - name: CHAOS_LOGIC_APP_ERROR_RATE
+          value: {{ .Values.chaos.logicAppErrorRate | quote }}
+        - name: CHAOS_LOGIC_APP_SLOW_RATE
+          value: {{ .Values.chaos.logicAppSlowRate | quote }}
         livenessProbe:
           httpGet:
             path: /health
