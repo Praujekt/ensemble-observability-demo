@@ -47,6 +47,11 @@ spec:
           value: {{ .Values.chaos.logicAppErrorRate | quote }}
         - name: CHAOS_LOGIC_APP_SLOW_RATE
           value: {{ .Values.chaos.logicAppSlowRate | quote }}
+        - name: GCLOUD_RW_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: grafana-credentials
+              key: api-key
         livenessProbe:
           httpGet:
             path: /health

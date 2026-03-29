@@ -5,7 +5,39 @@ import time
 import os
 import logging
 import json
+import base64
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+
+# ── OpenTelemetry tracing ─────────────────────────────────────────────
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.instrumentation.requests import RequestsInstrumentor
+from opentelemetry.sdk.resources import Resource
+
+resource = Resource.create({
+    "service.name": "ensemble-storefront",
+    "service.version": "1.0.0",
+    "deployment.environment": "demo",
+})
+
+_tempo_creds = base64.b64encode(
+    f"1526814:{os.environ.get('GCLOUD_RW_API_KEY', '')}".encode()
+).decode()
+
+otlp_exporter = OTLPSpanExporter(
+    endpoint="https://otlp-gateway-prod-us-west-0.grafana.net/otlp/v1/traces",
+    headers={
+        "Authorization": f"Basic {_tempo_creds}"
+    },
+)
+
+provider = TracerProvider(resource=resource)
+provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+trace.set_tracer_provider(provider)
+tracer = trace.get_tracer("ensemble-storefront")
 
 # ── Structured logging ───────────────────────────────────────────────
 class JSONFormatter(logging.Formatter):
@@ -19,6 +51,12 @@ class JSONFormatter(logging.Formatter):
         for key in ["endpoint", "sku", "user_id", "order_id", "duration_ms", "status_code", "error", "logic_app"]:
             if hasattr(record, key):
                 log[key] = getattr(record, key)
+        # Include trace context in logs for correlation
+        span = trace.get_current_span()
+        if span and span.is_recording():
+            ctx = span.get_span_context()
+            log["traceID"] = format(ctx.trace_id, '032x')
+            log["spanID"]  = format(ctx.span_id, '016x')
         return json.dumps(log)
 
 handler = logging.StreamHandler()
@@ -28,6 +66,10 @@ logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
 app = Flask(__name__)
+
+# Instrument Flask and requests AFTER app is created
+FlaskInstrumentor().instrument_app(app)
+RequestsInstrumentor().instrument()
 
 # ── Prometheus metrics ───────────────────────────────────────────────
 http_requests = Counter("ensemble_http_requests_total", "Total HTTP requests", ["endpoint", "method", "status_code"])
@@ -102,78 +144,94 @@ def update_active_users():
 
 def call_logic_app(name, url, payload, timeout=5):
     """
-    Calls an Azure Logic App. If URL not set, simulates with realistic latency.
-    Always records Prometheus metrics AND structured logs for dual-signal demo.
+    Calls an Azure Logic App with OpenTelemetry span tracking.
+    Each Logic App call gets its own span so the waterfall shows
+    exactly how long each Azure service took.
     """
     chaos = get_chaos_config()
     start = time.time()
 
-    # Chaos: throttle
-    if random.random() < chaos["logic_app_slow_rate"] * 0.15:
-        serverless_throttles.labels(service=name).inc()
-        logic_app_calls.labels(logic_app=name, status="throttled").inc()
-        logic_app_duration.labels(logic_app=name).observe(time.time() - start)
-        logger.warning("Logic App throttled", extra={"logic_app": name,
-            "duration_ms": round((time.time()-start)*1000)})
-        return False, "throttled"
+    with tracer.start_as_current_span(f"logic_app.{name}") as span:
+        span.set_attribute("logic_app.name", name)
+        span.set_attribute("logic_app.mode", "azure" if url else "simulated")
 
-    # Chaos: inject failures
-    if random.random() < chaos["logic_app_error_rate"]:
-        error_type = random.choice(["timeout", "upstream_error", "bad_request"])
-        logic_app_failures.labels(logic_app=name, error_type=error_type).inc()
-        logic_app_calls.labels(logic_app=name, status="failed").inc()
-        logic_app_duration.labels(logic_app=name).observe(time.time() - start)
-        logger.error("Logic App failed", extra={"logic_app": name, "error": error_type,
-            "duration_ms": round((time.time()-start)*1000)})
-        return False, error_type
-
-    if url:
-        # Real Azure Logic App call
-        try:
-            if chaos["logic_app_slow_rate"] > 0:
-                time.sleep(random.uniform(chaos["logic_app_slow_rate"],
-                    chaos["logic_app_slow_rate"] * 2.5))
-            resp = requests.post(url, json=payload, timeout=timeout)
-            duration = time.time() - start
-            logic_app_duration.labels(logic_app=name).observe(duration)
-            if resp.status_code in [200, 202]:
-                logic_app_calls.labels(logic_app=name, status="success").inc()
-                logger.info("Logic App succeeded", extra={"logic_app": name,
-                    "duration_ms": round(duration*1000), "status_code": resp.status_code})
-                return True, "success"
-            else:
-                logic_app_failures.labels(logic_app=name, error_type=str(resp.status_code)).inc()
-                logic_app_calls.labels(logic_app=name, status="failed").inc()
-                logger.error("Logic App error response", extra={"logic_app": name,
-                    "status_code": resp.status_code, "duration_ms": round(duration*1000)})
-                return False, str(resp.status_code)
-        except requests.Timeout:
-            logic_app_failures.labels(logic_app=name, error_type="timeout").inc()
-            logic_app_calls.labels(logic_app=name, status="failed").inc()
-            logic_app_duration.labels(logic_app=name).observe(time.time()-start)
-            logger.error("Logic App timed out", extra={"logic_app": name,
+        # Chaos: throttle
+        if random.random() < chaos["logic_app_slow_rate"] * 0.15:
+            serverless_throttles.labels(service=name).inc()
+            logic_app_calls.labels(logic_app=name, status="throttled").inc()
+            logic_app_duration.labels(logic_app=name).observe(time.time() - start)
+            span.set_attribute("logic_app.result", "throttled")
+            span.set_status(trace.StatusCode.ERROR, "throttled")
+            logger.warning("Logic App throttled", extra={"logic_app": name,
                 "duration_ms": round((time.time()-start)*1000)})
-            return False, "timeout"
-        except Exception as e:
-            logic_app_failures.labels(logic_app=name, error_type="exception").inc()
+            return False, "throttled"
+
+        # Chaos: inject failures
+        if random.random() < chaos["logic_app_error_rate"]:
+            error_type = random.choice(["timeout", "upstream_error", "bad_request"])
+            logic_app_failures.labels(logic_app=name, error_type=error_type).inc()
             logic_app_calls.labels(logic_app=name, status="failed").inc()
-            logic_app_duration.labels(logic_app=name).observe(time.time()-start)
-            logger.error("Logic App exception", extra={"logic_app": name, "error": str(e)})
-            return False, "exception"
-    else:
-        # Simulated call — realistic latency per service type
-        base = {"fraud-check": 0.12, "loyalty-points": 0.08,
-                "order-notification": 0.05}.get(name, 0.1)
-        if chaos["logic_app_slow_rate"] > 0:
-            base += random.uniform(chaos["logic_app_slow_rate"],
-                chaos["logic_app_slow_rate"] * 2)
-        time.sleep(base + random.uniform(0, 0.03))
-        duration = time.time() - start
-        logic_app_calls.labels(logic_app=name, status="success").inc()
-        logic_app_duration.labels(logic_app=name).observe(duration)
-        logger.info("Logic App simulated", extra={"logic_app": name,
-            "duration_ms": round(duration*1000), "mode": "simulated"})
-        return True, "success"
+            logic_app_duration.labels(logic_app=name).observe(time.time() - start)
+            span.set_attribute("logic_app.result", "failed")
+            span.set_attribute("logic_app.error_type", error_type)
+            span.set_status(trace.StatusCode.ERROR, error_type)
+            logger.error("Logic App failed", extra={"logic_app": name, "error": error_type,
+                "duration_ms": round((time.time()-start)*1000)})
+            return False, error_type
+
+        if url:
+            try:
+                if chaos["logic_app_slow_rate"] > 0:
+                    time.sleep(random.uniform(chaos["logic_app_slow_rate"],
+                        chaos["logic_app_slow_rate"] * 2.5))
+                resp = requests.post(url, json=payload, timeout=timeout)
+                duration = time.time() - start
+                logic_app_duration.labels(logic_app=name).observe(duration)
+                span.set_attribute("logic_app.duration_ms", round(duration * 1000))
+                span.set_attribute("http.status_code", resp.status_code)
+                if resp.status_code in [200, 202]:
+                    logic_app_calls.labels(logic_app=name, status="success").inc()
+                    span.set_attribute("logic_app.result", "success")
+                    logger.info("Logic App succeeded", extra={"logic_app": name,
+                        "duration_ms": round(duration*1000), "status_code": resp.status_code})
+                    return True, "success"
+                else:
+                    logic_app_failures.labels(logic_app=name, error_type=str(resp.status_code)).inc()
+                    logic_app_calls.labels(logic_app=name, status="failed").inc()
+                    span.set_status(trace.StatusCode.ERROR, str(resp.status_code))
+                    logger.error("Logic App error response", extra={"logic_app": name,
+                        "status_code": resp.status_code, "duration_ms": round(duration*1000)})
+                    return False, str(resp.status_code)
+            except requests.Timeout:
+                logic_app_failures.labels(logic_app=name, error_type="timeout").inc()
+                logic_app_calls.labels(logic_app=name, status="failed").inc()
+                logic_app_duration.labels(logic_app=name).observe(time.time()-start)
+                span.set_status(trace.StatusCode.ERROR, "timeout")
+                logger.error("Logic App timed out", extra={"logic_app": name,
+                    "duration_ms": round((time.time()-start)*1000)})
+                return False, "timeout"
+            except Exception as e:
+                logic_app_failures.labels(logic_app=name, error_type="exception").inc()
+                logic_app_calls.labels(logic_app=name, status="failed").inc()
+                logic_app_duration.labels(logic_app=name).observe(time.time()-start)
+                span.set_status(trace.StatusCode.ERROR, str(e))
+                logger.error("Logic App exception", extra={"logic_app": name, "error": str(e)})
+                return False, "exception"
+        else:
+            base = {"fraud-check": 0.12, "loyalty-points": 0.08,
+                    "order-notification": 0.05}.get(name, 0.1)
+            if chaos["logic_app_slow_rate"] > 0:
+                base += random.uniform(chaos["logic_app_slow_rate"],
+                    chaos["logic_app_slow_rate"] * 2)
+            time.sleep(base + random.uniform(0, 0.03))
+            duration = time.time() - start
+            logic_app_calls.labels(logic_app=name, status="success").inc()
+            logic_app_duration.labels(logic_app=name).observe(duration)
+            span.set_attribute("logic_app.result", "success")
+            span.set_attribute("logic_app.duration_ms", round(duration * 1000))
+            logger.info("Logic App simulated", extra={"logic_app": name,
+                "duration_ms": round(duration*1000), "mode": "simulated"})
+            return True, "success"
 
 
 # ── Routes ───────────────────────────────────────────────────────────
@@ -261,6 +319,11 @@ def checkout():
     data = request.get_json(silent=True) or {}
     items = data.get("items", [{"sku": "SKU-001", "qty": 1}])
 
+    # Set order_id on the current span so it appears in traces
+    span = trace.get_current_span()
+    span.set_attribute("order.id", order_id)
+    span.set_attribute("order.item_count", len(items))
+
     logger.info("Checkout started", extra={"order_id": order_id,
         "endpoint": "/api/checkout"})
     cart_size.observe(len(items))
@@ -274,6 +337,7 @@ def checkout():
         http_requests.labels(endpoint="/api/checkout", method="POST",
             status_code="500").inc()
         http_latency.labels(endpoint="/api/checkout").observe(time.time() - start)
+        span.set_status(trace.StatusCode.ERROR, reason)
         logger.error("Checkout failed", extra={"order_id": order_id, "error": reason,
             "duration_ms": round((time.time()-start)*1000)})
         return jsonify({"error": f"Checkout failed: {reason}"}), 500
@@ -290,35 +354,41 @@ def checkout():
     for item in items:
         sku = item.get("sku", "SKU-001")
         qty = item.get("qty", 1)
-        try:
-            inv_start = time.time()
-            resp = requests.get(f"{INVENTORY_URL}/inventory/{sku}", timeout=3)
-            inventory_call_duration.labels(endpoint="/inventory/sku").observe(
-                time.time() - inv_start)
-            if resp.status_code != 200:
-                inventory_call_errors.labels(
-                    status_code=str(resp.status_code)).inc()
-                checkout_errors.labels(reason="inventory_unavailable").inc()
+        with tracer.start_as_current_span(f"inventory.lookup") as inv_span:
+            inv_span.set_attribute("inventory.sku", sku)
+            inv_span.set_attribute("inventory.qty", qty)
+            try:
+                inv_start = time.time()
+                resp = requests.get(f"{INVENTORY_URL}/inventory/{sku}", timeout=3)
+                inventory_call_duration.labels(endpoint="/inventory/sku").observe(
+                    time.time() - inv_start)
+                if resp.status_code != 200:
+                    inventory_call_errors.labels(
+                        status_code=str(resp.status_code)).inc()
+                    checkout_errors.labels(reason="inventory_unavailable").inc()
+                    checkout_duration.observe(time.time() - start)
+                    http_requests.labels(endpoint="/api/checkout", method="POST",
+                        status_code="503").inc()
+                    http_latency.labels(endpoint="/api/checkout").observe(
+                        time.time() - start)
+                    inv_span.set_status(trace.StatusCode.ERROR, "inventory_unavailable")
+                    logger.error("Inventory check failed", extra={
+                        "order_id": order_id, "sku": sku})
+                    return jsonify({"error": "Inventory unavailable"}), 503
+                total += resp.json().get("price", 0) * qty
+                inv_span.set_attribute("inventory.price", resp.json().get("price", 0))
+            except requests.Timeout:
+                inventory_call_errors.labels(status_code="timeout").inc()
+                checkout_errors.labels(reason="inventory_timeout").inc()
                 checkout_duration.observe(time.time() - start)
                 http_requests.labels(endpoint="/api/checkout", method="POST",
-                    status_code="503").inc()
+                    status_code="504").inc()
                 http_latency.labels(endpoint="/api/checkout").observe(
                     time.time() - start)
-                logger.error("Inventory check failed", extra={
+                inv_span.set_status(trace.StatusCode.ERROR, "timeout")
+                logger.error("Inventory timeout", extra={
                     "order_id": order_id, "sku": sku})
-                return jsonify({"error": "Inventory unavailable"}), 503
-            total += resp.json().get("price", 0) * qty
-        except requests.Timeout:
-            inventory_call_errors.labels(status_code="timeout").inc()
-            checkout_errors.labels(reason="inventory_timeout").inc()
-            checkout_duration.observe(time.time() - start)
-            http_requests.labels(endpoint="/api/checkout", method="POST",
-                status_code="504").inc()
-            http_latency.labels(endpoint="/api/checkout").observe(
-                time.time() - start)
-            logger.error("Inventory timeout", extra={
-                "order_id": order_id, "sku": sku})
-            return jsonify({"error": "Checkout timed out"}), 504
+                return jsonify({"error": "Checkout timed out"}), 504
 
     # Step 3: Processing delay (chaos)
     if chaos["checkout_delay"] > 0:
@@ -342,6 +412,7 @@ def checkout():
     http_requests.labels(endpoint="/api/checkout", method="POST",
         status_code="200").inc()
     http_latency.labels(endpoint="/api/checkout").observe(duration)
+    span.set_attribute("order.total", round(total, 2))
     logger.info("Checkout completed", extra={"order_id": order_id,
         "duration_ms": round(duration*1000), "status_code": 200})
     return jsonify({"order_id": order_id, "status": "confirmed",

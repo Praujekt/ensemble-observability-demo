@@ -2,3 +2,8 @@ flask==3.0.0
 requests==2.31.0
 prometheus-client==0.24.1
 gunicorn==21.2.0
+opentelemetry-sdk
+opentelemetry-api
+opentelemetry-instrumentation-flask
+opentelemetry-instrumentation-requests
+opentelemetry-exporter-otlp-proto-http
