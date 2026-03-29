@@ -15,3 +15,5 @@ azure-values.yaml
 **/terraform.tfstate.backup
 **/terraform.tfvars
 !**/*.tfvars.example
+data-alloy/
+venv/
