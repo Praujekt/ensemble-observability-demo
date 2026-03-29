@@ -7,3 +7,11 @@ venv/
 *.egg-info/
 .DS_Store
 azure-values.yaml
+
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate
+**/terraform.tfstate.backup
+**/terraform.tfvars
+!**/*.tfvars.example
