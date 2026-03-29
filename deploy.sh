@@ -86,10 +86,24 @@ else
     log "ensemble-storefront installed ✓"
 fi
 
+# ── Force pod restart to pick up new images ───────────────
+log "Restarting pods to pick up new images..."
+kubectl rollout restart deployment/ensemble-inventory
+kubectl rollout restart deployment/ensemble-storefront
+
 # ── Wait for pods ─────────────────────────────────────────
 log "Waiting for pods to be ready..."
 kubectl rollout status deployment/ensemble-inventory --timeout=90s
 kubectl rollout status deployment/ensemble-storefront --timeout=90s
+
+# ── Wire Azure Logic Apps if values file exists ───────────
+if [ -f "$SCRIPT_DIR/azure-values.yaml" ]; then
+    log "Applying Azure Logic App URLs..."
+    helm upgrade ensemble-storefront ./helm/storefront -f "$SCRIPT_DIR/azure-values.yaml"
+    kubectl rollout restart deployment/ensemble-storefront
+    kubectl rollout status deployment/ensemble-storefront --timeout=90s
+    log "Azure Logic Apps wired ✓"
+fi
 
 # ── Done ──────────────────────────────────────────────────
 MINIKUBE_IP=$(minikube ip)
@@ -105,7 +119,7 @@ echo "  Or use port-forward:"
 echo "  kubectl port-forward svc/ensemble-storefront 5000:5000"
 echo ""
 echo "  Run chaos:"
-echo "  python3 chaos/chaos.py --mode normal"
-echo "  python3 chaos/chaos.py --mode ramp"
-echo "  python3 chaos/chaos.py --mode blackfriday"
+echo "  python3 chaos/chaos.py --mode normal --url http://$MINIKUBE_IP:30100"
+echo "  python3 chaos/chaos.py --mode ramp --url http://$MINIKUBE_IP:30100"
+echo "  python3 chaos/chaos.py --mode blackfriday --url http://$MINIKUBE_IP:30100"
 echo ""
