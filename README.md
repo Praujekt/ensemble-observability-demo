@@ -290,7 +290,7 @@ terraform apply \
 
 ## Azure Infrastructure
 
-Three Logic Apps in `ensemble-demo-rg` (East US) — deployed via Terraform:
+Three Logic Apps in `ensemble-demo-rg` (West US 2) — deployed via Terraform:
 
 - **ensemble-fraud-check** — HTTP trigger, called at checkout start, blocking
 - **ensemble-loyalty-points** — HTTP trigger, called post-purchase, non-blocking
