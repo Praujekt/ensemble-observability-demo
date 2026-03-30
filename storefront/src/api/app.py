@@ -24,7 +24,7 @@ resource = Resource.create({
 })
 
 _tempo_creds = base64.b64encode(
-    f"1526814:{os.environ.get('GCLOUD_RW_API_KEY', '')}".encode()
+    f"1574720:{os.environ.get('GCLOUD_RW_API_KEY', '')}".encode()
 ).decode()
 
 otlp_exporter = OTLPSpanExporter(
